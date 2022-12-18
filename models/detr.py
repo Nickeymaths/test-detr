@@ -315,6 +315,9 @@ def build(args):
         # for panoptic, we just add a num_classes that is large enough to hold
         # max_obj_id + 1, but the exact value doesn't really matter
         num_classes = 250
+    if args.dataset_file == "thyroid":
+        num_classes = 2
+        
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
@@ -357,3 +360,4 @@ def build(args):
             postprocessors["panoptic"] = PostProcessPanoptic(is_thing_map, threshold=0.85)
 
     return model, criterion, postprocessors
+
