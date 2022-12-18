@@ -229,7 +229,6 @@ class ToTensor(object):
     def __call__(self, img, target):
         return F.to_tensor(img), target
 
-
 class RandomErasing(object):
 
     def __init__(self, *args, **kwargs):

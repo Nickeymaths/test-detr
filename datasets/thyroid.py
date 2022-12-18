@@ -4,23 +4,30 @@ Face dataset which returns image_id for evaluation.
 
 Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references/detection/Face_utils.py
 """
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+"""
+Thyroid dataset which returns image_id for evaluation.
+Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references/detection/Thyroid_utils.py
+"""
 from pathlib import Path
 
 import torch
 import torch.utils.data
 import torchvision
-from pycocotools import mask as Face_mask
+from pycocotools import mask as Thyroid_mask
 
 import datasets.transforms as T
+import torchvision.transforms.functional as F
 
-class FaceDetection(torchvision.datasets.CocoDetection):
+
+class ThyroidDetection(torchvision.datasets.CocoDetection):
     def __init__(self, img_folder, ann_file, transforms, return_masks):
-        super(FaceDetection, self).__init__(img_folder, ann_file)
+        super(ThyroidDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
-        self.prepare = ConvertFacePolysToMask(return_masks)
+        self.prepare = ConvertThyroidPolysToMask(return_masks)
 
     def __getitem__(self, idx):
-        img, target = super(FaceDetection, self).__getitem__(idx)
+        img, target = super(ThyroidDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
         img, target = self.prepare(img, target)
@@ -29,11 +36,11 @@ class FaceDetection(torchvision.datasets.CocoDetection):
         return img, target
 
 
-def convert_Face_poly_to_mask(segmentations, height, width):
+def convert_Thyroid_poly_to_mask(segmentations, height, width):
     masks = []
     for polygons in segmentations:
-        rles = Face_mask.frPyObjects(polygons, height, width)
-        mask = Face_mask.decode(rles)
+        rles = Thyroid_mask.frPyObjects(polygons, height, width)
+        mask = Thyroid_mask.decode(rles)
         if len(mask.shape) < 3:
             mask = mask[..., None]
         mask = torch.as_tensor(mask, dtype=torch.uint8)
@@ -46,7 +53,7 @@ def convert_Face_poly_to_mask(segmentations, height, width):
     return masks
 
 
-class ConvertFacePolysToMask(object):
+class ConvertThyroidPolysToMask(object):
     def __init__(self, return_masks=False):
         self.return_masks = return_masks
 
@@ -72,7 +79,7 @@ class ConvertFacePolysToMask(object):
 
         if self.return_masks:
             segmentations = [obj["segmentation"] for obj in anno]
-            masks = convert_Face_poly_to_mask(segmentations, h, w)
+            masks = convert_Thyroid_poly_to_mask(segmentations, h, w)
 
         keypoints = None
         if anno and "keypoints" in anno[0]:
@@ -99,7 +106,7 @@ class ConvertFacePolysToMask(object):
         if keypoints is not None:
             target["keypoints"] = keypoints
 
-        # for conversion to Face api
+        # for conversion to Thyroid api
         area = torch.tensor([obj["area"] for obj in anno])
         iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
         target["area"] = area[keep]
@@ -111,32 +118,32 @@ class ConvertFacePolysToMask(object):
         return image, target
 
 
-def make_Face_transforms(image_set):
+def make_thyroid_transforms(image_set):
 
     normalize = T.Compose([
         T.ToTensor(),
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
-    scales = [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
+    scales = [256, 480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
 
     if image_set == 'train':
         return T.Compose([
-            T.RandomHorizontalFlip(),
-            T.RandomSelect(
-                T.RandomResize(scales, max_size=1333),
-                T.Compose([
-                    T.RandomResize([400, 500, 600]),
-                    T.RandomSizeCrop(384, 600),
-                    T.RandomResize(scales, max_size=1333),
-                ])
-            ),
+            # T.RandomHorizontalFlip(),
+            # T.RandomSelect(
+            #     T.RandomResize(scales, max_size=1333),
+            #     T.Compose([
+            #         T.RandomResize([400, 500, 600]),
+            #         T.RandomSizeCrop(384, 600),
+            #         T.RandomResize(scales, max_size=1333),
+            #     ])
+            # ),
             normalize,
         ])
 
     if image_set == 'val':
         return T.Compose([
-            T.RandomResize([800], max_size=1333),
+            # T.RandomResize([800], max_size=1333),
             normalize,
         ])
 
@@ -145,7 +152,7 @@ def make_Face_transforms(image_set):
 
 def build(image_set, args):
     root = Path(args.data_path)
-    assert root.exists(), f'provided Face path {root} does not exist'
+    assert root.exists(), f'provided Thyroid path {root} does not exist'
     mode = 'instances'
     PATHS = {
         "train": (root / "images" / "train", root / "annotations" / f'train.json'),
@@ -153,6 +160,6 @@ def build(image_set, args):
     }
 
     img_folder, ann_file = PATHS[image_set]
-    dataset = FaceDetection(img_folder, ann_file, transforms=make_Face_transforms(image_set), return_masks=args.masks)
+    dataset = ThyroidDetection(img_folder, ann_file, transforms=make_thyroid_transforms(image_set), return_masks=args.masks)
     return dataset
 
