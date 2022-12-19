@@ -80,7 +80,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=2, type=int,
+    parser.add_argument('--num_queries', default=100, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
 
@@ -167,6 +167,7 @@ def infer(images_path, model, postprocessors, device, output_path):
         outputs["pred_boxes"] = outputs["pred_boxes"].cpu()
 
         probas = outputs['pred_logits'].softmax(-1)[0, :, :-1]
+        print(torch.argmax(probas, dim=-1))
         # keep = probas.max(-1).values > 0.85
         keep = probas.max(-1).values > args.thresh
 
