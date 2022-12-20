@@ -27,31 +27,30 @@ from scipy import signal
 
 
 class ThyroidDetection(torchvision.datasets.CocoDetection):
-    def __init__(self, img_folder, ann_file, transforms, return_masks):
+    def __init__(self, img_folder, ann_file, transforms, return_masks, brighness_levels=5):
         super(ThyroidDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
+        self.brighness_levels = brighness_levels
         self.prepare = ConvertThyroidPolysToMask(return_masks)
     
     def _load_image(self, id: int) -> Image.Image:
         path = self.coco.loadImgs(id)[0]["file_name"]
-        im = get_im_from_dcm(os.path.join(self.root, path))
-        im = gray_to_pil(increase_count(body_cut(im), 20)).convert("RGB")
-        return im    
+        org_im = body_cut(get_im_from_dcm(os.path.join(self.root, path)))
+        im_batch = create_imbatch(org_im, self.brighness_levels).astype(np.uint8)
+        # im = gray_to_pil(increase_count(body_cut(im), 20)).convert("RGB")
+        return gray_to_pil(org_im), im_batch    
 
     def __getitem__(self, idx):
         # Copy from load image function of CocoDetector
         id = self.ids[idx]
-        img = self._load_image(id)
+        org_img, img = self._load_image(id)
         target = self._load_target(id)
-
-        if self.transforms is not None:
-            img, target = self.transforms(img, target)
         # img, target = super(ThyroidDetection, self).__getitem__(idx)
         
         # Additional code
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
-        img, target = self.prepare(img, target)
+        org_img, target = self.prepare(org_img, target)
         if self._transforms is not None:
             img, target = self._transforms(img, target)
         return img, target
@@ -92,6 +91,12 @@ def increase_count(im: np.ndarray, factor: int=1):
     im[im < 0] = 0
     im[im > 255] = 255
     return im
+
+def create_imbatch(im: np.ndarray, brighness_levels: int):
+    # im shape HxW
+    im_batch = np.vstack([increase_count(im, 2**i) for i in range(brighness_levels)]).reshape(brighness_levels, *im.shape)
+    im_batch = im_batch.transpose(1, 2, 0) # transpose to HxWxnum_level
+    return im_batch
 
 def convert_Thyroid_poly_to_mask(segmentations, height, width):
     masks = []
@@ -175,11 +180,15 @@ class ConvertThyroidPolysToMask(object):
         return image, target
 
 
-def make_thyroid_transforms(image_set):
-
+def make_thyroid_transforms(image_set, brighness_levels=5):
+    means = [0.485, 0.456, 0.406]
+    stds = [0.229, 0.224, 0.225]
     normalize = T.Compose([
         T.ToTensor(),
-        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        T.Normalize(
+            means * (brighness_levels // 3) + means[:brighness_levels % 3], 
+            stds * (brighness_levels // 3) + stds[:brighness_levels % 3]
+        )
     ])
 
     scales = [256, 480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
@@ -217,6 +226,6 @@ def build(image_set, args):
     }
 
     img_folder, ann_file = PATHS[image_set]
-    dataset = ThyroidDetection(img_folder, ann_file, transforms=make_thyroid_transforms(image_set), return_masks=args.masks)
+    dataset = ThyroidDetection(img_folder, ann_file, transforms=make_thyroid_transforms(image_set, args.brighness_levels), return_masks=args.masks)
     return dataset
 

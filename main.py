@@ -81,6 +81,7 @@ def get_args_parser():
     # dataset parameters
     parser.add_argument('--dataset_file', default='thyroid')
     parser.add_argument('--data_path', type=str)
+    parser.add_argument('--brighness_levels', default=5, type=int, help='Number of levels for increasing brighness')
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
 
@@ -179,6 +180,7 @@ def main(args):
         del checkpoint["model"]["class_embed.weight"]
         del checkpoint["model"]["class_embed.bias"]
         del checkpoint["model"]["query_embed.weight"]
+        del checkpoint["model"]["backbone.0.body.conv1.weight"]
         
         model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
