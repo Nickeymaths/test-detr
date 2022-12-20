@@ -11,6 +11,8 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 """
 from pathlib import Path
 
+import numpy as np
+
 import torch
 import torch.utils.data
 import torchvision
@@ -18,6 +20,10 @@ from pycocotools import mask as Thyroid_mask
 
 import datasets.transforms as T
 import torchvision.transforms.functional as F
+from PIL import Image
+import os
+import pydicom
+from scipy import signal
 
 
 class ThyroidDetection(torchvision.datasets.CocoDetection):
@@ -25,9 +31,24 @@ class ThyroidDetection(torchvision.datasets.CocoDetection):
         super(ThyroidDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.prepare = ConvertThyroidPolysToMask(return_masks)
+    
+    def _load_image(self, id: int) -> Image.Image:
+        path = self.coco.loadImgs(id)[0]["file_name"]
+        im = get_im_from_dcm(os.path.join(self.root, path))
+        im = gray_to_pil(increase_count(body_cut(im), 20)).convert("RGB")
+        return im    
 
     def __getitem__(self, idx):
-        img, target = super(ThyroidDetection, self).__getitem__(idx)
+        # Copy from load image function of CocoDetector
+        id = self.ids[idx]
+        img = self._load_image(id)
+        target = self._load_target(id)
+
+        if self.transforms is not None:
+            img, target = self.transforms(img, target)
+        # img, target = super(ThyroidDetection, self).__getitem__(idx)
+        
+        # Additional code
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
         img, target = self.prepare(img, target)
@@ -35,6 +56,42 @@ class ThyroidDetection(torchvision.datasets.CocoDetection):
             img, target = self._transforms(img, target)
         return img, target
 
+def get_im_from_dcm(path: str):
+    im = pydicom.dcmread(path).pixel_array
+    return im
+
+def body_cut(im: np.ndarray):
+    return  im[:256, :256] if im.shape[:2] != (512, 512) else im
+
+def gray_to_pil(im: np.ndarray):
+    im = Image.fromarray(np.uint8(im))
+    return im
+
+def increase_count(im: np.ndarray, factor: int=1):
+    # scharr = np.array([[1, 1, 1],
+
+    #                 [1, 2, 1],
+
+    #                 [1, 1, 1]])*factor
+    
+    # scharr = np.array([[1, 1, 1, 1, 1],
+    #             [1, 1, 1, 1, 1],
+    #             [1, 1, 1, 1, 1],
+    #             [1, 1, 1, 1, 1],
+    #             [1, 1, 1, 1, 1]])*factor
+    
+    scharr = np.array([[1, 1, 1, 1, 1],
+            [1, 2, 2, 2, 1],
+            [1, 2, 4, 2, 1],
+            [1, 2, 2, 2, 1],
+            [1, 1, 1, 1, 1]])*factor
+    
+
+    im = signal.convolve2d(im, scharr, boundary='symm', mode='same')
+    # im = ndimage.gaussian_filter(im.astype(np.float32)*1000*factor, sigma=1, mode='reflect').astype(np.uint16)
+    im[im < 0] = 0
+    im[im > 255] = 255
+    return im
 
 def convert_Thyroid_poly_to_mask(segmentations, height, width):
     masks = []

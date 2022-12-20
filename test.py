@@ -13,11 +13,11 @@ import torch
 import util.misc as utils
 
 from models import build_model
-from datasets.thyroid import make_thyroid_transforms
+from datasets.thyroid import body_cut, get_im_from_dcm, gray_to_pil, increase_count, make_thyroid_transforms
 
 import matplotlib.pyplot as plt
 import time
-
+SUPPORT_IMG_TYPE = ['.jpg', '.jpeg', '.gif', '.png', '.pgm', '.dcm']
 
 def box_cxcywh_to_xyxy(x):
     x_c, y_c, w, h = x.unbind(1)
@@ -39,7 +39,7 @@ def get_images(in_path):
         for file in filenames:
             filename, ext = os.path.splitext(file)
             ext = str.lower(ext)
-            if ext == '.jpg' or ext == '.jpeg' or ext == '.gif' or ext == '.png' or ext == '.pgm':
+            if ext in SUPPORT_IMG_TYPE:
                 img_files.append(os.path.join(dirpath, file))
 
     return img_files
@@ -80,7 +80,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=100, type=int,
+    parser.add_argument('--num_queries', default=75, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
 
@@ -130,7 +130,10 @@ def infer(images_path, model, postprocessors, device, output_path):
     for img_sample in images_path:
         filename = os.path.basename(img_sample)
         print("processing...{}".format(filename))
-        orig_image = Image.open(img_sample).convert('RGB')
+        
+        orig_image = get_im_from_dcm(img_sample)
+        orig_image = gray_to_pil(increase_count(body_cut(orig_image), 20)).convert("RGB")
+        # orig_image = Image.open(img_sample).convert('RGB')
         w, h = orig_image.size
         transform = make_thyroid_transforms("val")
         dummy_target = {
@@ -167,12 +170,12 @@ def infer(images_path, model, postprocessors, device, output_path):
         outputs["pred_boxes"] = outputs["pred_boxes"].cpu()
 
         probas = outputs['pred_logits'].softmax(-1)[0, :, :-1]
-        print(torch.argmax(probas, dim=-1))
-        # keep = probas.max(-1).values > 0.85
         keep = probas.max(-1).values > args.thresh
 
         bboxes_scaled = rescale_bboxes(outputs['pred_boxes'][0, keep], orig_image.size)
+        probas, labels = probas.max(-1)
         probas = probas[keep].cpu().data.numpy()
+        labels = labels[keep].cpu().data.numpy()
 
         for hook in hooks:
             hook.remove()
@@ -200,8 +203,9 @@ def infer(images_path, model, postprocessors, device, output_path):
                 ])
             bbox = bbox.reshape((4, 2))
             cv2.polylines(img, [bbox], True, (0, 255, 0), 2)
+            cv2.putText(img, str(labels[idx]), bbox[0], cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
 
-        img_save_path = os.path.join(output_path, filename)
+        img_save_path = os.path.join(output_path, os.path.splitext(filename)[0]+".png")
         cv2.imwrite(img_save_path, img)
         # cv2.imshow("img", img)
         # cv2.waitKey()
