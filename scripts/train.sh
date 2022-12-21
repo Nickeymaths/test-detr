@@ -4,6 +4,7 @@ python main.py \
 --data_path data/thyroid \
 --batch_size 8 \
 --dilation \
+--brighness_levels 5 \
 --set_cost_class 3 \
---output_dir output/thyroid_dc5_dcm_icr_f10 \
---resume weights/detr-r50-dc5-panoptic-da08f1b1.pth
+--output_dir output/thyroid_dcm_5_icrsbl \
+--resume weights/detr-r50-e632da11.pth

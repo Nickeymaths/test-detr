@@ -36,7 +36,7 @@ class ThyroidDetection(torchvision.datasets.CocoDetection):
     def _load_image(self, id: int) -> Image.Image:
         path = self.coco.loadImgs(id)[0]["file_name"]
         org_im = body_cut(get_im_from_dcm(os.path.join(self.root, path)))
-        im_batch = create_imbatch(org_im, self.brighness_levels).astype(np.uint8)
+        im_batch = create_imbatch(org_im, self.brighness_levels)
         # im = gray_to_pil(increase_count(body_cut(im), 20)).convert("RGB")
         return gray_to_pil(org_im), im_batch    
 
@@ -96,7 +96,7 @@ def create_imbatch(im: np.ndarray, brighness_levels: int):
     # im shape HxW
     im_batch = np.vstack([increase_count(im, 2**i) for i in range(brighness_levels)]).reshape(brighness_levels, *im.shape)
     im_batch = im_batch.transpose(1, 2, 0) # transpose to HxWxnum_level
-    return im_batch
+    return im_batch.astype(np.uint8)
 
 def convert_Thyroid_poly_to_mask(segmentations, height, width):
     masks = []

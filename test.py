@@ -13,7 +13,7 @@ import torch
 import util.misc as utils
 
 from models import build_model
-from datasets.thyroid import body_cut, get_im_from_dcm, gray_to_pil, increase_count, make_thyroid_transforms
+from datasets.thyroid import body_cut, get_im_from_dcm, gray_to_pil, increase_count, make_thyroid_transforms, create_imbatch
 
 import matplotlib.pyplot as plt
 import time
@@ -111,6 +111,7 @@ def get_args_parser():
     parser.add_argument('--data_path', type=str)
     parser.add_argument('--data_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
+    parser.add_argument('--brighness_levels', default=5, type=int, help='Number of levels for increasing brighness')
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save the results, empty for no saving')
@@ -124,23 +125,26 @@ def get_args_parser():
 
 
 @torch.no_grad()
-def infer(images_path, model, postprocessors, device, output_path):
+def infer(images_path, brighness_levels, model, postprocessors, device, output_path):
     model.eval()
     duration = 0
     for img_sample in images_path:
         filename = os.path.basename(img_sample)
         print("processing...{}".format(filename))
         
-        orig_image = get_im_from_dcm(img_sample)
-        orig_image = gray_to_pil(increase_count(body_cut(orig_image), 20)).convert("RGB")
+        orig_image = body_cut(get_im_from_dcm(img_sample))
+        img = create_imbatch(orig_image, brighness_levels)
+        orig_image = gray_to_pil(increase_count(orig_image, 5)).convert("RGB")
+        
         # orig_image = Image.open(img_sample).convert('RGB')
         w, h = orig_image.size
-        transform = make_thyroid_transforms("val")
+        transform = make_thyroid_transforms("val", brighness_levels)
         dummy_target = {
             "size": torch.as_tensor([int(h), int(w)]),
             "orig_size": torch.as_tensor([int(h), int(w)])
         }
-        image, targets = transform(orig_image, dummy_target)
+        # image, targets = transform(orig_image, dummy_target)
+        image, targets = transform(img, dummy_target)
         image = image.unsqueeze(0)
         image = image.to(device)
 
@@ -232,4 +236,4 @@ if __name__ == "__main__":
     model.to(device)
     image_paths = get_images(args.data_path)
 
-    infer(image_paths, model, postprocessors, device, args.output_dir)
+    infer(image_paths, args.brighness_levels, model, postprocessors, device, args.output_dir)
