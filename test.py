@@ -9,11 +9,13 @@ from PIL import Image
 import numpy as np
 
 import torch
+import pandas as pd
 
 import util.misc as utils
 
 from models import build_model
 from datasets.thyroid import body_cut, get_im_from_dcm, gray_to_pil, increase_count, make_thyroid_transforms, create_imbatch
+from util.postprocessing import get_gt_info_from_dcm, get_iou_info, draw_bbox
 
 import matplotlib.pyplot as plt
 import time
@@ -43,6 +45,10 @@ def get_images(in_path):
                 img_files.append(os.path.join(dirpath, file))
 
     return img_files
+
+def parse_img_id(img_path):
+    fn = os.path.basename(img_path)
+    return fn.rsplit('.', 1)[0]
 
 
 def get_args_parser():
@@ -80,7 +86,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=75, type=int,
+    parser.add_argument('--num_queries', default=70, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
 
@@ -128,13 +134,23 @@ def get_args_parser():
 def infer(images_path, brighness_levels, model, postprocessors, device, output_path):
     model.eval()
     duration = 0
+    summary_tb = {
+        'img_id': [], 
+        'pred_bboxes': [], 
+        'pred_labels': [], 
+        'gt_bboxes': [], 
+        'gt_labels': [],
+        'iou': []
+    }
+    
     for img_sample in images_path:
         filename = os.path.basename(img_sample)
+        img_id = parse_img_id(img_sample)
         print("processing...{}".format(filename))
         
         orig_image = body_cut(get_im_from_dcm(img_sample))
         img = create_imbatch(orig_image, brighness_levels)
-        orig_image = gray_to_pil(increase_count(orig_image, 5)).convert("RGB")
+        orig_image = gray_to_pil(increase_count(orig_image, brighness_levels)).convert("RGB")
         
         # orig_image = Image.open(img_sample).convert('RGB')
         w, h = orig_image.size
@@ -193,30 +209,45 @@ def infer(images_path, brighness_levels, model, postprocessors, device, output_p
 
         if len(bboxes_scaled) == 0:
             continue
+        
+        bboxes_scaled = bboxes_scaled.cpu().tolist()
+        
+        summary_tb['img_id'].append(img_id)
+        summary_tb['pred_bboxes'].append(bboxes_scaled)
+        summary_tb['pred_labels'].append(labels)
+        
+        gt_bboxes, gt_labels = get_gt_info_from_dcm(img_sample)
+        summary_tb['gt_bboxes'].append(gt_bboxes)
+        summary_tb['gt_labels'].append(gt_labels)
+        summary_tb['iou'].append(get_iou_info(gt_bboxes, bboxes_scaled, gt_labels, labels))
 
         img = np.array(orig_image)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        for idx, box in enumerate(bboxes_scaled):
-            bbox = box.cpu().data.numpy()
-            bbox = bbox.astype(np.int32)
-            bbox = np.array([
-                [bbox[0], bbox[1]],
-                [bbox[2], bbox[1]],
-                [bbox[2], bbox[3]],
-                [bbox[0], bbox[3]],
-                ])
-            bbox = bbox.reshape((4, 2))
-            cv2.polylines(img, [bbox], True, (0, 255, 0), 2)
-            cv2.putText(img, str(labels[idx]), bbox[0], cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
+        draw_bbox(img, gt_bboxes, gt_labels, color=(0, 0, 255))
+        draw_bbox(img, bboxes_scaled, labels, color=(0, 255, 0))
+        
+        # for idx, box in enumerate(bboxes_scaled):
+        #     bbox = box.cpu().data.numpy()
+        #     bbox = bbox.astype(np.int32)
+        #     bbox = np.array([
+        #         [bbox[0], bbox[1]],
+        #         [bbox[2], bbox[1]],
+        #         [bbox[2], bbox[3]],
+        #         [bbox[0], bbox[3]],
+        #         ])
+        #     bbox = bbox.reshape((4, 2))
+        #     cv2.polylines(img, [bbox], True, (0, 255, 0), 2)
+        #     cv2.putText(img, str(labels[idx]), bbox[0], cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
 
-        img_save_path = os.path.join(output_path, os.path.splitext(filename)[0]+".png")
+        img_save_path = os.path.join(output_path, img_id+".png")
         cv2.imwrite(img_save_path, img)
-        # cv2.imshow("img", img)
-        # cv2.waitKey()
+
         infer_time = end_t - start_t
         duration += infer_time
         print("Processing...{} ({:.3f}s)".format(filename, infer_time))
-
+    
+    summary_tb = pd.DataFrame(summary_tb)
+    summary_tb.to_csv(os.path.join(output_path, 'summary.csv'))
     avg_duration = duration / len(images_path)
     print("Avg. Time: {:.3f}s".format(avg_duration))
 

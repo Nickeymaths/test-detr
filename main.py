@@ -52,7 +52,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=75, type=int,
+    parser.add_argument('--num_queries', default=70, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
 
@@ -177,10 +177,10 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
         
-        del checkpoint["model"]["class_embed.weight"]
-        del checkpoint["model"]["class_embed.bias"]
-        del checkpoint["model"]["query_embed.weight"]
-        del checkpoint["model"]["backbone.0.body.conv1.weight"]
+       # del checkpoint["model"]["class_embed.weight"]
+       # del checkpoint["model"]["class_embed.bias"]
+       # del checkpoint["model"]["query_embed.weight"]
+       # del checkpoint["model"]["backbone.0.body.conv1.weight"]
         
         model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
@@ -197,6 +197,7 @@ def main(args):
 
     print("Start training")
     start_time = time.time()
+    best = np.inf
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
@@ -226,6 +227,17 @@ def main(args):
                      **{f'test_{k}': v for k, v in test_stats.items()},
                      'epoch': epoch,
                      'n_parameters': n_parameters}
+        
+        if test_stats["loss"] + test_stats["class_error"] < best:
+            utils.save_on_master({
+                'model': model_without_ddp.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'lr_scheduler': lr_scheduler.state_dict(),
+                'epoch': epoch,
+                'args': args,
+            }, output_dir / 'best.pth')
+            best = test_stats["loss"] + test_stats["class_error"]
+            print("Current best evaluation error: ", best)
 
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:

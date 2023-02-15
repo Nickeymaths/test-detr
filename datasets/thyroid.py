@@ -226,6 +226,6 @@ def build(image_set, args):
     }
 
     img_folder, ann_file = PATHS[image_set]
-    dataset = ThyroidDetection(img_folder, ann_file, transforms=make_thyroid_transforms(image_set, args.brighness_levels), return_masks=args.masks)
+    dataset = ThyroidDetection(img_folder, ann_file, transforms=make_thyroid_transforms(image_set, args.brighness_levels), return_masks=args.masks, brighness_levels=args.brighness_levels)
     return dataset
 
