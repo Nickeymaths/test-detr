@@ -142,8 +142,11 @@ def get_iou_info(gt_bboxes, pred_bboxes, gt_labels, pred_labels):
     accumulation = []
     for pred_bbox, pred_label in zip(pred_bboxes, pred_labels):
         gt_bbox_idx = gt_labels.index(pred_label)
-        gt_bbox = gt_bboxes[gt_bbox_idx]
-        accumulation.append(get_iou(pred_bbox, gt_bbox))
+        if len(gt_labels) == len(gt_bboxes):
+            gt_bbox = gt_bboxes[gt_bbox_idx]
+            accumulation.append(get_iou(pred_bbox, gt_bbox))
+        else:
+            print('LACK ANNOTATION: [gt_box: {}, gt_label: {}]'.format(len(gt_bboxes), len(gt_labels)))
     return accumulation
 
 def create_gt_pred_tb(summary_tb, args):

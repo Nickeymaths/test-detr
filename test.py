@@ -86,7 +86,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=70, type=int,
+    parser.add_argument('--num_queries', default=75, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
 
@@ -150,7 +150,7 @@ def infer(images_path, brighness_levels, model, postprocessors, device, output_p
         
         orig_image = body_cut(get_im_from_dcm(img_sample))
         img = create_imbatch(orig_image, brighness_levels)
-        orig_image = gray_to_pil(increase_count(orig_image, brighness_levels)).convert("RGB")
+        orig_image = gray_to_pil(increase_count(orig_image, 3)).convert("RGB")
         
         # orig_image = Image.open(img_sample).convert('RGB')
         w, h = orig_image.size
@@ -211,6 +211,7 @@ def infer(images_path, brighness_levels, model, postprocessors, device, output_p
             continue
         
         bboxes_scaled = bboxes_scaled.cpu().tolist()
+        labels = labels.tolist()
         
         summary_tb['img_id'].append(img_id)
         summary_tb['pred_bboxes'].append(bboxes_scaled)
@@ -225,19 +226,6 @@ def infer(images_path, brighness_levels, model, postprocessors, device, output_p
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         draw_bbox(img, gt_bboxes, gt_labels, color=(0, 0, 255))
         draw_bbox(img, bboxes_scaled, labels, color=(0, 255, 0))
-        
-        # for idx, box in enumerate(bboxes_scaled):
-        #     bbox = box.cpu().data.numpy()
-        #     bbox = bbox.astype(np.int32)
-        #     bbox = np.array([
-        #         [bbox[0], bbox[1]],
-        #         [bbox[2], bbox[1]],
-        #         [bbox[2], bbox[3]],
-        #         [bbox[0], bbox[3]],
-        #         ])
-        #     bbox = bbox.reshape((4, 2))
-        #     cv2.polylines(img, [bbox], True, (0, 255, 0), 2)
-        #     cv2.putText(img, str(labels[idx]), bbox[0], cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
 
         img_save_path = os.path.join(output_path, img_id+".png")
         cv2.imwrite(img_save_path, img)

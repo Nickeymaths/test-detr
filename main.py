@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
+import wandb
 
 import datasets
 import util.misc as utils
@@ -52,7 +53,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=70, type=int,
+    parser.add_argument('--num_queries', default=75, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
 
@@ -106,6 +107,7 @@ def get_args_parser():
 def main(args):
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
+    wandb.init('test-detr', config=args)
 
     if args.frozen_weights is not None:
         assert args.masks, "Frozen training is meant for segmentation only"
@@ -177,10 +179,10 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
         
-       # del checkpoint["model"]["class_embed.weight"]
-       # del checkpoint["model"]["class_embed.bias"]
-       # del checkpoint["model"]["query_embed.weight"]
-       # del checkpoint["model"]["backbone.0.body.conv1.weight"]
+        # del checkpoint["model"]["class_embed.weight"]
+        # del checkpoint["model"]["class_embed.bias"]
+        # del checkpoint["model"]["query_embed.weight"]
+        # del checkpoint["model"]["backbone.0.body.conv1.weight"]
         
         model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
@@ -224,11 +226,23 @@ def main(args):
         )
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                     **{f'test_{k}': v for k, v in test_stats.items()},
+                     **{f'val_{k}': v for k, v in test_stats.items()},
                      'epoch': epoch,
+                     'best_eval_loss': best,
                      'n_parameters': n_parameters}
         
-        if test_stats["loss"] + test_stats["class_error"] < best:
+        # if test_stats["loss"] + test_stats["class_error"] < best:
+        #     utils.save_on_master({
+        #         'model': model_without_ddp.state_dict(),
+        #         'optimizer': optimizer.state_dict(),
+        #         'lr_scheduler': lr_scheduler.state_dict(),
+        #         'epoch': epoch,
+        #         'args': args,
+        #     }, output_dir / 'best.pth')
+        #     best = test_stats["loss"] + test_stats["class_error"]
+        #     print("Current best evaluation error: ", best)
+        
+        if test_stats['loss'] + train_stats['loss']*0.1 < best:
             utils.save_on_master({
                 'model': model_without_ddp.state_dict(),
                 'optimizer': optimizer.state_dict(),
@@ -236,12 +250,22 @@ def main(args):
                 'epoch': epoch,
                 'args': args,
             }, output_dir / 'best.pth')
-            best = test_stats["loss"] + test_stats["class_error"]
+            best = test_stats["loss"] + train_stats['loss']*0.1
             print("Current best evaluation error: ", best)
 
         if args.output_dir and utils.is_main_process():
-            with (output_dir / "log.txt").open("a") as f:
-                f.write(json.dumps(log_stats) + "\n")
+            wandb.log({
+                'epoch': log_stats['epoch'], 
+                'lr': log_stats['train_lr'],
+                # 'n_parameters': log_stats['n_parameters'], 
+                'train_class_error': log_stats['train_class_error'],
+                'train_loss': log_stats['train_loss'],
+                'val_class_error': log_stats['val_class_error'],
+                'val_loss': log_stats['val_loss'],
+                'best_eval_loss': log_stats['best_eval_loss']
+                })
+            # with (output_dir / "log.txt").open("a") as f:
+            #     f.write(json.dumps(log_stats) + "\n")
 
             # for evaluation logs
             if coco_evaluator is not None:

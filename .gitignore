@@ -18,3 +18,4 @@ not_tracked_dir/
 data/*
 *output/*
 infer_out/*
+wandb/*

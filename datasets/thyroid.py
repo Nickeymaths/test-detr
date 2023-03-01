@@ -63,7 +63,7 @@ def body_cut(im: np.ndarray):
     return  im[:256, :256] if im.shape[:2] != (512, 512) else im
 
 def gray_to_pil(im: np.ndarray):
-    im = Image.fromarray(np.uint8(im))
+    im = Image.fromarray(np.uint16(im))
     return im
 
 def increase_count(im: np.ndarray, factor: int=1):
