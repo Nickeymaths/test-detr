@@ -83,6 +83,8 @@ def get_args_parser():
     parser.add_argument('--dataset_file', default='thyroid')
     parser.add_argument('--data_path', type=str)
     parser.add_argument('--brighness_levels', default=5, type=int, help='Number of levels for increasing brighness')
+    parser.add_argument('--iou_thrs_list', default='0.3,0.5',
+                        help='IOU threshold for evaluating purpose for each class [class_1, class_2] [shoulder, thyroid]', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
 
@@ -179,27 +181,28 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
         
-        # del checkpoint["model"]["class_embed.weight"]
-        # del checkpoint["model"]["class_embed.bias"]
-        # del checkpoint["model"]["query_embed.weight"]
-        # del checkpoint["model"]["backbone.0.body.conv1.weight"]
+        del checkpoint["model"]["class_embed.weight"]
+        del checkpoint["model"]["class_embed.bias"]
+        del checkpoint["model"]["query_embed.weight"]
+        del checkpoint["model"]["backbone.0.body.conv1.weight"]
         
         model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
-
+        
+    label2iou_thrs = {id + 1: float(item) for id, item in enumerate(args.iou_thrs_list.split(','))}
     if args.eval:
         test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
-                                              data_loader_val, base_ds, device, args.output_dir)
+                                              data_loader_val, base_ds, label2iou_thrs, device, args.output_dir)
         if args.output_dir:
             utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
     print("Start training")
     start_time = time.time()
-    best = np.inf
+    best = -np.inf
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
@@ -222,15 +225,9 @@ def main(args):
                 }, checkpoint_path)
 
         test_stats, coco_evaluator = evaluate(
-            model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
+            model, criterion, postprocessors, data_loader_val, base_ds, label2iou_thrs, device, args.output_dir
         )
-
-        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                     **{f'val_{k}': v for k, v in test_stats.items()},
-                     'epoch': epoch,
-                     'best_eval_loss': best,
-                     'n_parameters': n_parameters}
-        
+                
         # if test_stats["loss"] + test_stats["class_error"] < best:
         #     utils.save_on_master({
         #         'model': model_without_ddp.state_dict(),
@@ -242,7 +239,13 @@ def main(args):
         #     best = test_stats["loss"] + test_stats["class_error"]
         #     print("Current best evaluation error: ", best)
         
-        if test_stats['loss'] + train_stats['loss']*0.1 < best:
+        # current = test_stats['loss_ce'] * criterion.weight_dict['loss_ce'] \
+        #             + test_stats['loss_bbox'] * criterion.weight_dict['loss_bbox'] \
+        #             + test_stats['loss_giou'] * criterion.weight_dict['loss_giou']
+        current = test_stats['overall_mAP']
+        print(current)
+                    
+        if current > best:
             utils.save_on_master({
                 'model': model_without_ddp.state_dict(),
                 'optimizer': optimizer.state_dict(),
@@ -250,8 +253,14 @@ def main(args):
                 'epoch': epoch,
                 'args': args,
             }, output_dir / 'best.pth')
-            best = test_stats["loss"] + train_stats['loss']*0.1
+            best = current
             print("Current best evaluation error: ", best)
+        
+        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+                **{f'val_{k}': v for k, v in test_stats.items()},
+                'epoch': epoch,
+                'best_eval_map': best,
+                'n_parameters': n_parameters}
 
         if args.output_dir and utils.is_main_process():
             wandb.log({
@@ -262,7 +271,9 @@ def main(args):
                 'train_loss': log_stats['train_loss'],
                 'val_class_error': log_stats['val_class_error'],
                 'val_loss': log_stats['val_loss'],
-                'best_eval_loss': log_stats['best_eval_loss']
+                'val_shoulder_map30': log_stats['val_shoulder_mAP@.3'],
+                'val_thyroid_map50': log_stats['val_thyroid_mAP@.5'],
+                'best_eval_map': log_stats['best_eval_map']
                 })
             # with (output_dir / "log.txt").open("a") as f:
             #     f.write(json.dumps(log_stats) + "\n")

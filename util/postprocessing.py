@@ -8,6 +8,13 @@ import ast
 from datasets.thyroid import body_cut, get_im_from_dcm, gray_to_pil, increase_count, make_thyroid_transforms, create_imbatch
 import cv2
 
+NAME2ID = {
+    'thyroid': 2,
+    'shoulder': 1
+}
+
+ID2NAME = ['__bg__', 'shoulder', 'thyroid']
+
 def get_gt_info_from_dcm(fp):
     """
 
@@ -158,7 +165,7 @@ def create_gt_pred_tb(summary_tb, args):
     df.to_csv(os.path.join(args.out, 'summary.csv'), index=False)
     return df
 
-def draw_bbox(img, bboxes, labels, color=(0, 255, 0)):
+def draw_bbox(img, bboxes, labels, color=(0, 255, 0), probas=None):
     if len(bboxes) == 0:
         return
     
@@ -174,8 +181,60 @@ def draw_bbox(img, bboxes, labels, color=(0, 255, 0)):
             ])
         bbox = bbox.reshape((4, 2))
         cv2.polylines(img, [bbox], True, color, 2)
-        cv2.putText(img, str(labels[idx]), bbox[0], cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
+        if probas is not None:
+            cv2.putText(img, '{:s}: {:.2f}'.format(ID2NAME[labels[idx]], probas[idx]), bbox[0]-20, cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,0,255), 1)
 
+        else:
+            cv2.putText(img, str(labels[idx]), bbox[0], cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0,0,255), 1)
+
+def truncate_bbox(bbox, h, w):
+    """
+
+    Args:
+        bbox (list): [x0, y0, x1, y1]
+    """
+    
+    bbox = [e if e >= 0 else 0 for e in bbox]
+    bbox[0] = bbox[0] if bbox[0] < w else w - 1
+    bbox[2] = bbox[2] if bbox[2] < w else w - 1
+    bbox[1] = bbox[1] if bbox[1] < h else h - 1
+    bbox[3] = bbox[3] if bbox[3] < h else h - 1
+    return bbox
+
+def cal_uptake(img, bbox):
+    # bbox = [int(x) for x in bbox]
+    bbox = truncate_bbox(bbox, *img.shape[:2])
+    a = (bbox[2] - bbox[0]) / 2
+    b = (bbox[3] - bbox[1]) / 2
+    # area = a * b * 4
+    c_x = (bbox[0] + bbox[2]) / 2
+    c_y = (bbox[1] + bbox[3]) /2
+    
+    x = list(range(img.shape[1]))
+    y = list(range(img.shape[0]))
+    xx, yy = np.meshgrid(x, y)
+    
+    uptake = np.sum(img[((xx - c_x)**2 / (a**2) + (yy - c_y)**2 / (b**2)) <= 1]) 
+    # ROI = img[bbox[1]:bbox[3], bbox[0]:bbox[2]]
+    return uptake
+
+def cal_rsi(uptakes: np.ndarray, labels: np.ndarray):
+    thyroid_uptakes = uptakes[labels == NAME2ID['thyroid']]
+    shoulder_uptakes = uptakes[labels == NAME2ID['shoulder']]
+    
+    if len(shoulder_uptakes) == 0:
+        selected_shoulder_uptake = 0
+    else:
+        selected_shoulder_uptake = shoulder_uptakes.max()
+        
+    if len(thyroid_uptakes) == 0:
+        selected_thyroid_uptake = 0
+    else:
+        selected_thyroid_uptake = thyroid_uptakes.max()
+        
+    rsi = selected_thyroid_uptake / selected_shoulder_uptake if len(shoulder_uptakes) != 0 and len(thyroid_uptakes) != 0 else 0
+    return selected_thyroid_uptake, selected_shoulder_uptake, rsi
+            
 def gen_gtapred_img(df, args):
     for idx, row in df.iterrows():
         img_id = row.img_id

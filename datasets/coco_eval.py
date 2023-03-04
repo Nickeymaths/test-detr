@@ -49,6 +49,11 @@ class CocoEvaluator(object):
             coco_eval.cocoDt = coco_dt
             coco_eval.params.imgIds = list(img_ids)
             img_ids, eval_imgs = evaluate(coco_eval)
+            # with open('logs.txt', 'a') as f:
+            #     f.write('Eval images\n')
+            #     f.write(str(eval_imgs))
+            #     f.write('\nPrediction images')
+            #     f.write(str(results))
 
             self.eval_imgs[iou_type].append(eval_imgs)
 

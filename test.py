@@ -15,11 +15,15 @@ import util.misc as utils
 
 from models import build_model
 from datasets.thyroid import body_cut, get_im_from_dcm, gray_to_pil, increase_count, make_thyroid_transforms, create_imbatch
-from util.postprocessing import get_gt_info_from_dcm, get_iou_info, draw_bbox
+from util.postprocessing import get_gt_info_from_dcm, get_iou_info, draw_bbox, cal_uptake, cal_rsi
 
 import matplotlib.pyplot as plt
 import time
 SUPPORT_IMG_TYPE = ['.jpg', '.jpeg', '.gif', '.png', '.pgm', '.dcm']
+NAME2ID = {
+    'thyroid': 2,
+    'shoulder': 1
+}
 
 def box_cxcywh_to_xyxy(x):
     x_c, y_c, w, h = x.unbind(1)
@@ -150,10 +154,10 @@ def infer(images_path, brighness_levels, model, postprocessors, device, output_p
         
         orig_image = body_cut(get_im_from_dcm(img_sample))
         img = create_imbatch(orig_image, brighness_levels)
-        orig_image = gray_to_pil(increase_count(orig_image, 3)).convert("RGB")
+        bright_image = gray_to_pil(increase_count(orig_image, 3)).convert("RGB")
         
         # orig_image = Image.open(img_sample).convert('RGB')
-        w, h = orig_image.size
+        w, h = bright_image.size
         transform = make_thyroid_transforms("val", brighness_levels)
         dummy_target = {
             "size": torch.as_tensor([int(h), int(w)]),
@@ -192,7 +196,7 @@ def infer(images_path, brighness_levels, model, postprocessors, device, output_p
         probas = outputs['pred_logits'].softmax(-1)[0, :, :-1]
         keep = probas.max(-1).values > args.thresh
 
-        bboxes_scaled = rescale_bboxes(outputs['pred_boxes'][0, keep], orig_image.size)
+        bboxes_scaled = rescale_bboxes(outputs['pred_boxes'][0, keep], bright_image.size)
         probas, labels = probas.max(-1)
         probas = probas[keep].cpu().data.numpy()
         labels = labels[keep].cpu().data.numpy()
@@ -211,21 +215,29 @@ def infer(images_path, brighness_levels, model, postprocessors, device, output_p
             continue
         
         bboxes_scaled = bboxes_scaled.cpu().tolist()
-        labels = labels.tolist()
+        uptakes = np.array([cal_uptake(orig_image, box) for box in bboxes_scaled])
+        labels = np.asanyarray(labels.tolist())
+        probas = np.asanyarray(probas.tolist())
+        
+        # Get uptake of thyroid bbox
+        selected_thyroid_uptake, selected_shoulder_uptake, rsi = cal_rsi(uptakes, labels)
         
         summary_tb['img_id'].append(img_id)
         summary_tb['pred_bboxes'].append(bboxes_scaled)
-        summary_tb['pred_labels'].append(labels)
+        summary_tb['pred_labels'].append(labels.tolist())
         
         gt_bboxes, gt_labels = get_gt_info_from_dcm(img_sample)
         summary_tb['gt_bboxes'].append(gt_bboxes)
         summary_tb['gt_labels'].append(gt_labels)
         summary_tb['iou'].append(get_iou_info(gt_bboxes, bboxes_scaled, gt_labels, labels))
-
-        img = np.array(orig_image)
+        
+        img = np.array(bright_image)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        draw_bbox(img, gt_bboxes, gt_labels, color=(0, 0, 255))
-        draw_bbox(img, bboxes_scaled, labels, color=(0, 255, 0))
+        # draw_bbox(img, gt_bboxes, gt_labels, color=(0, 255, 0))
+        draw_bbox(img, bboxes_scaled, labels, color=(0, 0, 255), probas=probas)
+        cv2.putText(img, 'Thyroid uptake: {:.2f}'.format(selected_thyroid_uptake), [20, 20], cv2.FONT_HERSHEY_SIMPLEX, 0.25*(img.shape[0]/256), (0,0,255), 2)
+        cv2.putText(img, 'Shoulder uptake: {:.2f}'.format(selected_shoulder_uptake), [20, 60], cv2.FONT_HERSHEY_SIMPLEX, 0.25*(img.shape[0]/256), (0,0,255), 2)
+        cv2.putText(img, 'RSI: {:.2f}'.format(rsi), [20, 100], cv2.FONT_HERSHEY_SIMPLEX, 0.25*(img.shape[0]/256), (0,0,255), 2)
 
         img_save_path = os.path.join(output_path, img_id+".png")
         cv2.imwrite(img_save_path, img)
@@ -238,7 +250,6 @@ def infer(images_path, brighness_levels, model, postprocessors, device, output_p
     summary_tb.to_csv(os.path.join(output_path, 'summary.csv'))
     avg_duration = duration / len(images_path)
     print("Avg. Time: {:.3f}s".format(avg_duration))
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('DETR training and evaluation script', parents=[get_args_parser()])

@@ -6,11 +6,14 @@ import math
 import os
 import sys
 from typing import Iterable
+import json
+import numpy as np
 
 import torch
 
 import util.misc as utils
 from datasets.coco_eval import CocoEvaluator
+from datasets.map_eval import MapEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
 
 
@@ -65,25 +68,28 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
+def evaluate(model, criterion, postprocessors, data_loader, base_ds, label2iou_thrs, device, output_dir):
     model.eval()
     criterion.eval()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    
     header = 'Test:'
 
     iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessors.keys())
-    coco_evaluator = CocoEvaluator(base_ds, iou_types)
+    # coco_evaluator = CocoEvaluator(base_ds, iou_types)
+    coco_evaluator = None
+    map_evaluator = MapEvaluator(label2iou_thrs=label2iou_thrs)
     # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
 
-    panoptic_evaluator = None
-    if 'panoptic' in postprocessors.keys():
-        panoptic_evaluator = PanopticEvaluator(
-            data_loader.dataset.ann_file,
-            data_loader.dataset.ann_folder,
-            output_dir=os.path.join(output_dir, "panoptic_eval"),
-        )
+    # panoptic_evaluator = None
+    # if 'panoptic' in postprocessors.keys():
+    #     panoptic_evaluator = PanopticEvaluator(
+    #         data_loader.dataset.ann_file,
+    #         data_loader.dataset.ann_folder,
+    #         output_dir=os.path.join(output_dir, "panoptic_eval"),
+    #     )
 
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
@@ -110,42 +116,62 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
             target_sizes = torch.stack([t["size"] for t in targets], dim=0)
             results = postprocessors['segm'](results, outputs, orig_target_sizes, target_sizes)
         res = {target['image_id'].item(): output for target, output in zip(targets, results)}
-        if coco_evaluator is not None:
-            coco_evaluator.update(res)
+        
+        for img_id, result_dict in res.items():
+                gt_anns = base_ds.loadAnns(base_ds.getAnnIds(img_id))
+                ground_truth_dict = {
+                    'boxes': np.asarray([ann['bbox'] for ann in gt_anns]),
+                    'labels': np.asarray([ann['category_id'] for ann in gt_anns])
+                }
+                ground_truth_dict['boxes'][:, 2:] += ground_truth_dict['boxes'][:, :2]
+                
+                pred_dict = {
+                    'boxes': result_dict['boxes'].cpu().numpy(),
+                    'labels':result_dict['labels'].cpu().numpy(),
+                    'scores':result_dict['scores'].cpu().numpy()
+                }
+                map_evaluator.update(ground_truth_dict, pred_dict)
+            
+        # if coco_evaluator is not None:
+        #     coco_evaluator.update(res)
 
-        if panoptic_evaluator is not None:
-            res_pano = postprocessors["panoptic"](outputs, target_sizes, orig_target_sizes)
-            for i, target in enumerate(targets):
-                image_id = target["image_id"].item()
-                file_name = f"{image_id:012d}.png"
-                res_pano[i]["image_id"] = image_id
-                res_pano[i]["file_name"] = file_name
+        # if panoptic_evaluator is not None:
+        #     res_pano = postprocessors["panoptic"](outputs, target_sizes, orig_target_sizes)
+        #     for i, target in enumerate(targets):
+        #         image_id = target["image_id"].item()
+        #         file_name = f"{image_id:012d}.png"
+        #         res_pano[i]["image_id"] = image_id
+        #         res_pano[i]["file_name"] = file_name
 
-            panoptic_evaluator.update(res_pano)
+        #     panoptic_evaluator.update(res_pano)
 
     # gather the stats from all processes
+    eval_map = map_evaluator.caculate()
+    
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    if coco_evaluator is not None:
-        coco_evaluator.synchronize_between_processes()
-    if panoptic_evaluator is not None:
-        panoptic_evaluator.synchronize_between_processes()
+    # if coco_evaluator is not None:
+    #     coco_evaluator.synchronize_between_processes()
+    # if panoptic_evaluator is not None:
+    #     panoptic_evaluator.synchronize_between_processes()
 
-    # accumulate predictions from all images
-    if coco_evaluator is not None:
-        coco_evaluator.accumulate()
-        coco_evaluator.summarize()
-    panoptic_res = None
-    if panoptic_evaluator is not None:
-        panoptic_res = panoptic_evaluator.summarize()
+    # # accumulate predictions from all images
+    # if coco_evaluator is not None:
+    #     coco_evaluator.accumulate()
+    #     coco_evaluator.summarize()
+    # panoptic_res = None
+    # if panoptic_evaluator is not None:
+    #     panoptic_res = panoptic_evaluator.summarize()
     stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    if coco_evaluator is not None:
-        if 'bbox' in postprocessors.keys():
-            stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
-        if 'segm' in postprocessors.keys():
-            stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
-    if panoptic_res is not None:
-        stats['PQ_all'] = panoptic_res["All"]
-        stats['PQ_th'] = panoptic_res["Things"]
-        stats['PQ_st'] = panoptic_res["Stuff"]
+    # if coco_evaluator is not None:
+    #     if 'bbox' in postprocessors.keys():
+    #         stats['coco_eval_bbox'] = coco_evaluator.coco_eval['bbox'].stats.tolist()
+    #     if 'segm' in postprocessors.keys():
+    #         stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
+    # if panoptic_res is not None:
+    #     stats['PQ_all'] = panoptic_res["All"]
+    #     stats['PQ_th'] = panoptic_res["Things"]
+    #     stats['PQ_st'] = panoptic_res["Stuff"]
+    stats.update(**{'thyroid_mAP@.5': eval_map[2], 'shoulder_mAP@.3': eval_map[1], 'overall_mAP': eval_map['all']})
+    map_evaluator.reset()
     return stats, coco_evaluator
