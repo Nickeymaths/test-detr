@@ -195,7 +195,8 @@ def main(args):
     label2iou_thrs = {id + 1: float(item) for id, item in enumerate(args.iou_thrs_list.split(','))}
     if args.eval:
         test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
-                                              data_loader_val, base_ds, label2iou_thrs, device, args.output_dir)
+                                              data_loader_val, base_ds, label2iou_thrs, device, args.data_path, args.output_dir)
+        print(test_stats)
         if args.output_dir:
             utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
@@ -225,7 +226,7 @@ def main(args):
                 }, checkpoint_path)
 
         test_stats, coco_evaluator = evaluate(
-            model, criterion, postprocessors, data_loader_val, base_ds, label2iou_thrs, device, args.output_dir
+            model, criterion, postprocessors, data_loader_val, base_ds, label2iou_thrs, device, args.data_path, args.output_dir
         )
                 
         # if test_stats["loss"] + test_stats["class_error"] < best:
@@ -242,7 +243,9 @@ def main(args):
         # current = test_stats['loss_ce'] * criterion.weight_dict['loss_ce'] \
         #             + test_stats['loss_bbox'] * criterion.weight_dict['loss_bbox'] \
         #             + test_stats['loss_giou'] * criterion.weight_dict['loss_giou']
-        current = test_stats['overall_mAP']
+        # current = (test_stats['overall_mAP'] * 2 + test_stats['rsi_acc']) / 3
+        current = (test_stats['overall_mAP'] * 2 + test_stats['rsi_acc']) / 3
+        
         print(current)
                     
         if current > best:
@@ -273,7 +276,8 @@ def main(args):
                 'val_loss': log_stats['val_loss'],
                 'val_shoulder_map30': log_stats['val_shoulder_mAP@.3'],
                 'val_thyroid_map50': log_stats['val_thyroid_mAP@.5'],
-                'best_eval_map': log_stats['best_eval_map']
+                'best_eval_map': log_stats['best_eval_map'],
+                'val_rsi_acc': log_stats['val_rsi_acc']
                 })
             # with (output_dir / "log.txt").open("a") as f:
             #     f.write(json.dumps(log_stats) + "\n")

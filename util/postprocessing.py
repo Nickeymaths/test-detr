@@ -214,7 +214,9 @@ def cal_uptake(img, bbox):
     y = list(range(img.shape[0]))
     xx, yy = np.meshgrid(x, y)
     
-    uptake = np.sum(img[((xx - c_x)**2 / (a**2) + (yy - c_y)**2 / (b**2)) <= 1]) 
+    uptake = np.sum(img[((xx - c_x)**2 / (a**2) + (yy - c_y)**2 / (b**2)) <= 1])
+    if uptake == 0:
+        print(bbox)
     # ROI = img[bbox[1]:bbox[3], bbox[0]:bbox[2]]
     return uptake
 
@@ -234,6 +236,26 @@ def cal_rsi(uptakes: np.ndarray, labels: np.ndarray):
         
     rsi = selected_thyroid_uptake / selected_shoulder_uptake if len(shoulder_uptakes) != 0 and len(thyroid_uptakes) != 0 else 0
     return selected_thyroid_uptake, selected_shoulder_uptake, rsi
+
+def calc_rsi_acc(pred_dict, gt_rsi, eps, top_k):    
+    lbs = pred_dict['labels']
+    thyroid_uptakes = pred_dict['uptakes'][lbs == 2][: top_k]
+    # thyroid_scores = pred_dict['scores'][lbs == 2][: top_k]
+    shoulder_uptakes = pred_dict['uptakes'][lbs == 1][: top_k]
+    # shoulder_scores = pred_dict['scores'][lbs == 1][: top_k]
+    
+    if len(thyroid_uptakes) == 0 or len(shoulder_uptakes) == 0:
+        return 0
+    rsi_mtx = thyroid_uptakes / shoulder_uptakes.reshape(-1, 1)
+    # score_mtx = (thyroid_scores + shoulder_scores.reshape(-1, 1))
+    acc_mtx = np.abs(rsi_mtx - gt_rsi) <= eps
+    N_match = np.sum(acc_mtx)
+    
+    # print('N_shoulder x N_thyroid[{}, {}]'.format(*score_mtx.shape))
+    # print('N_match[{}]'.format(N_match))
+    
+    # acc_scores = np.sum(score_mtx * acc_mtx) / np.sum(score_mtx)
+    return 1 if N_match > 0 else 0
             
 def gen_gtapred_img(df, args):
     for idx, row in df.iterrows():

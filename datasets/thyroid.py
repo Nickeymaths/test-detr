@@ -78,6 +78,8 @@ def increase_count(im: np.ndarray, factor: int=1):
     #             [1, 1, 1, 1, 1],
     #             [1, 1, 1, 1, 1],
     #             [1, 1, 1, 1, 1]])*factor
+    if factor <= 0:
+        return im
     
     scharr = np.array([[1, 1, 1, 1, 1],
             [1, 2, 2, 2, 1],
@@ -94,7 +96,10 @@ def increase_count(im: np.ndarray, factor: int=1):
 
 def create_imbatch(im: np.ndarray, brighness_levels: int):
     # im shape HxW
-    im_batch = np.vstack([increase_count(im, 2**i) for i in range(brighness_levels)]).reshape(brighness_levels, *im.shape)
+    bright_factors = [2**i for i in range(brighness_levels - 1)]
+    bright_factors.insert(0, 0) # Original image
+    
+    im_batch = np.vstack([increase_count(im, factor) for factor in bright_factors]).reshape(brighness_levels, *im.shape)
     im_batch = im_batch.transpose(1, 2, 0) # transpose to HxWxnum_level
     return im_batch.astype(np.uint8)
 

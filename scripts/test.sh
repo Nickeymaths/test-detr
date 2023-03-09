@@ -1,9 +1,9 @@
 #!/bin/bash
 python test.py --data_path data/detr_data/images/test \
---dataset_file thyroid --resume output/thyroid_dcm_3_icrsbl_detr_data_r50_cost_class_1.5tt/best.pth \
+--dataset_file thyroid --resume output/resnet50_75nq_coscl2_5bl/best.pth \
 --backbone resnet50 \
---output_dir infer_out/thyroid_dcm_3_icrsbl_detr_data_r50_cost_class_1.5tt/test \
---brighness_levels 3 \
+--output_dir infer_out/resnet50_75nq_coscl2_5bl/test \
+--brighness_levels 5 \
 --set_cost_class 2 \
---num_queries 70 \
+--num_queries 75 \
 --thresh 0.8
